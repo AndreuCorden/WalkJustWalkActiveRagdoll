@@ -9,15 +9,23 @@ namespace ActiveRagdoll {
         [SerializeField] private GripModule _gripModule;
         private AnimatorHelper _ikHelper;
 
-        [Header("--- Player 2 Foot Tuning ---")]
-        public float stepHeight = 0.45f;
-        public float stepLength = 0.5f;
-        public float footTransitSpeed = 10f;
+        [Header("--- Posture & Height Tuning ---")]
+        public float stanceYOffset = -0.15f; 
         public float footHorizontalSpacing = 0.18f;
+        [Tooltip("How far forward the knee hints push to prevent backward bending.")]
+        public float kneeHintForwardOffset = 0.4f;
 
-        // Position state blending vectors
-        private Vector3 _leftFootLocalTarget;
-        private Vector3 _rightFootLocalTarget;
+        [Header("--- Player 2 Step Mechanics ---")]
+        public float stepHeight = 0.4f;
+        public float stepLength = 0.5f;
+        public float footTransitSpeed = 12f;
+
+        // Directional blending processors
+        private float _leftFootLiftBlender;
+        private float _leftFootExtendBlender;
+        private float _rightFootLiftBlender;
+        private float _rightFootExtendBlender;
+
         private bool _isGrounded = true;
 
         private void Start() {
@@ -28,22 +36,14 @@ namespace ActiveRagdoll {
 
             _ikHelper = _activeRagdoll.AnimatorHelper;
 
-            // Turn on Inverse Kinematics dominance for the legs
             _ikHelper.LeftLegIKWeight = 1.0f;
             _ikHelper.RightLegIKWeight = 1.0f;
 
-            // Pause automated walk loops from fighting our inputs
             if (_animationModule.Animator != null) {
                 _animationModule.Animator.speed = 0f; 
             }
 
-            _leftFootLocalTarget = new Vector3(-footHorizontalSpacing, 0f, 0f);
-            _rightFootLocalTarget = new Vector3(footHorizontalSpacing, 0f, 0f);
-
-            // Wire up internal events
             _activeRagdoll.Input.OnFloorChangedDelegates += HandleFloorChanged;
-            
-            // Wire up Player 1 arm/grip system interactions (formerly in DefaultBehaviour)
             _activeRagdoll.Input.OnLeftArmDelegates += _animationModule.UseLeftArm;
             _activeRagdoll.Input.OnLeftArmDelegates += _gripModule.UseLeftGrip;
             _activeRagdoll.Input.OnRightArmDelegates += _animationModule.UseRightArm;
@@ -58,10 +58,8 @@ namespace ActiveRagdoll {
         }
 
         private void ProcessPlayer1Director() {
-            // Player 1 handles camera aiming trajectory data
             if (_activeRagdoll.TryGetComponent(out CameraModule cameraMod) && cameraMod.Camera != null) {
                 Vector3 directionalHeading = Vector3.ProjectOnPlane(cameraMod.Camera.transform.forward, Vector3.up).normalized;
-                
                 _physicsModule.TargetDirection = directionalHeading;
                 _animationModule.AimDirection = directionalHeading;
             }
@@ -71,49 +69,63 @@ namespace ActiveRagdoll {
             Player2Data p2Input = _activeRagdoll.Input.Player2Input;
             Transform physicalTorso = _activeRagdoll.PhysicalTorso.transform;
 
-            // --- PROCESS LEFT FOOT ---
-            float targetLeftY = p2Input.liftLeftLeg ? stepHeight : 0f;
-            float targetLeftZ = p2Input.extendLeftLeg ? stepLength : -stepLength * 0.3f;
+            // --- 1. PROCESS INPUT MODIFIERS (Q=Lift, A=Forward, Z=Backward) ---
+            float targetLeftLift = p2Input.liftLeftLeg ? stepHeight : 0f;
+            float targetLeftExtend = 0f;
+            if (p2Input.extendLeftLeg) targetLeftExtend = stepLength;       // A key pressed
+            else if (Input.GetKey(KeyCode.Z)) targetLeftExtend = -stepLength; // Z key pressed
 
-            _leftFootLocalTarget.x = -footHorizontalSpacing;
-            _leftFootLocalTarget.y = Mathf.MoveTowards(_leftFootLocalTarget.y, targetLeftY, Time.deltaTime * footTransitSpeed);
-            _leftFootLocalTarget.z = Mathf.MoveTowards(_leftFootLocalTarget.z, targetLeftZ, Time.deltaTime * footTransitSpeed);
+            _leftFootLiftBlender = Mathf.MoveTowards(_leftFootLiftBlender, targetLeftLift, Time.deltaTime * footTransitSpeed);
+            _leftFootExtendBlender = Mathf.MoveTowards(_leftFootExtendBlender, targetLeftExtend, Time.deltaTime * footTransitSpeed);
 
-            // --- PROCESS RIGHT FOOT ---
-            float targetRightY = p2Input.liftRightLeg ? stepHeight : 0f;
-            float targetRightZ = p2Input.extendRightLeg ? stepLength : -stepLength * 0.3f;
+            // --- 2. PROCESS INPUT MODIFIERS (E=Lift, D=Forward, C=Backward) ---
+            float targetRightLift = p2Input.liftRightLeg ? stepHeight : 0f;
+            float targetRightExtend = 0f;
+            if (p2Input.extendRightLeg) targetRightExtend = stepLength;       // D key pressed
+            else if (Input.GetKey(KeyCode.C)) targetRightExtend = -stepLength; // C key pressed
 
-            _rightFootLocalTarget.x = footHorizontalSpacing;
-            _rightFootLocalTarget.y = Mathf.MoveTowards(_rightFootLocalTarget.y, targetRightY, Time.deltaTime * footTransitSpeed);
-            _rightFootLocalTarget.z = Mathf.MoveTowards(_rightFootLocalTarget.z, targetRightZ, Time.deltaTime * footTransitSpeed);
+            _rightFootLiftBlender = Mathf.MoveTowards(_rightFootLiftBlender, targetRightLift, Time.deltaTime * footTransitSpeed);
+            _rightFootExtendBlender = Mathf.MoveTowards(_rightFootExtendBlender, targetRightExtend, Time.deltaTime * footTransitSpeed);
 
-            // --- SPATIAL CONVERSION TO RAGDOLL SYSTEM TARGETS ---
-            Vector3 centerGroundBase = physicalTorso.position;
-            centerGroundBase.y = transform.position.y; 
+            // --- 3. BASE POSITION ANCHOR ---
+            Vector3 groundBaseAnchor = physicalTorso.position;
+            groundBaseAnchor.y = transform.position.y; 
 
-            Vector3 finalLeftWorldPos = centerGroundBase + 
-                                         (physicalTorso.right * _leftFootLocalTarget.x) + 
-                                         (Vector3.up * _leftFootLocalTarget.y) + 
-                                         (physicalTorso.forward * _leftFootLocalTarget.z);
+            // --- 4. CALCULATE TARGET WORLD POSITIONS ---
+            Vector3 finalLeftWorldPos = groundBaseAnchor + 
+                                         (physicalTorso.right * -footHorizontalSpacing) + 
+                                         (Vector3.up * (_leftFootLiftBlender + stanceYOffset)) + 
+                                         (physicalTorso.forward * _leftFootExtendBlender);
 
-            Vector3 finalRightWorldPos = centerGroundBase + 
-                                          (physicalTorso.right * _rightFootLocalTarget.x) + 
-                                          (Vector3.up * _rightFootLocalTarget.y) + 
-                                          (physicalTorso.forward * _rightFootLocalTarget.z);
+            Vector3 finalRightWorldPos = groundBaseAnchor + 
+                                          (physicalTorso.right * footHorizontalSpacing) + 
+                                          (Vector3.up * (_rightFootLiftBlender + stanceYOffset)) + 
+                                          (physicalTorso.forward * _rightFootExtendBlender);
 
+            // --- 5. SHIP TRANSFORMS TO HINT DRIVERS ---
             _ikHelper.LeftFootTarget.position = finalLeftWorldPos;
             _ikHelper.RightFootTarget.position = finalRightWorldPos;
 
             _ikHelper.LeftFootTarget.rotation = Quaternion.LookRotation(physicalTorso.forward, Vector3.up);
             _ikHelper.RightFootTarget.rotation = Quaternion.LookRotation(physicalTorso.forward, Vector3.up);
+
+            // --- 6. POSITION KNEE HINTS DYNAMICALLY IN FRONT OF LEGS ---
+            if (_ikHelper.LeftKneeHint != null) {
+                _ikHelper.LeftKneeHint.position = groundBaseAnchor + 
+                                                  (physicalTorso.right * -footHorizontalSpacing) + 
+                                                  (Vector3.up * (_leftFootLiftBlender + stanceYOffset + 0.4f)) + 
+                                                  (physicalTorso.forward * (_leftFootExtendBlender + kneeHintForwardOffset));
+            }
+            if (_ikHelper.RightKneeHint != null) {
+                _ikHelper.RightKneeHint.position = groundBaseAnchor + 
+                                                   (physicalTorso.right * footHorizontalSpacing) + 
+                                                   (Vector3.up * (_rightFootLiftBlender + stanceYOffset + 0.4f)) + 
+                                                   (physicalTorso.forward * (_rightFootExtendBlender + kneeHintForwardOffset));
+            }
         }
 
-        /// <summary>
-        /// Replaces the old floor logic inside DefaultBehaviour to prevent control loops from clashing.
-        /// </summary>
         private void HandleFloorChanged(bool onFloor) {
             _isGrounded = onFloor;
-
             if (onFloor) {
                 _physicsModule.SetBalanceMode(PhysicsModule.BALANCE_MODE.STABILIZER_JOINT);
                 _activeRagdoll.GetBodyPart("Head Neck")?.SetStrengthScale(1f);
@@ -122,7 +134,6 @@ namespace ActiveRagdoll {
                 _animationModule.PlayAnimation("Idle");
             }
             else {
-                // If tripped or airborne, drop joints strength scaling to simulate ragdolling out of control
                 _physicsModule.SetBalanceMode(PhysicsModule.BALANCE_MODE.MANUAL_TORQUE);
                 _activeRagdoll.GetBodyPart("Head Neck")?.SetStrengthScale(0.1f);
                 _activeRagdoll.GetBodyPart("Right Leg")?.SetStrengthScale(0.05f);

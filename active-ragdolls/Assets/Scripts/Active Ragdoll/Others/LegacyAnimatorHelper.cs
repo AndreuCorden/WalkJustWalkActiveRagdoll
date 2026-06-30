@@ -1,17 +1,20 @@
-using System;
+﻿/*using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
 namespace ActiveRagdoll {
     // Author: Sergio Abreu García | https://sergioabreu.me
-    // Modified to support advanced Player 2 manual legs locomotion & knee-flip hints
 
+    /// <summary>
+    /// Helper class that contains a lot of necessary functionality to control the animator,
+    /// and more especifically the IK.
+    /// </summary>
     [RequireComponent(typeof(Animator))]
     public class AnimatorHelper : MonoBehaviour {
         private Animator _animator;
 
-        // ----- Look Mode Config -----
+        // ----- Look -----
         public enum LookMode {
             TARGET,
             POINT,
@@ -20,47 +23,39 @@ namespace ActiveRagdoll {
         public Transform LookTarget { get; private set; }
         public Vector3 LookPoint { get; private set; }
 
-        [Header("IK Foot Target Handles")]
-        public Transform LeftFootTarget;
-        public Transform RightFootTarget;
-
-        [Header("IK Knee Hint Handles")]
-        public Transform LeftKneeHint;
-        public Transform RightKneeHint;
-
-        // ----- Generated Hand Targets (Managed at Runtime) -----
+        // ----- IK Targets -----
         private Transform _targetsParent;
         public Transform LeftHandTarget { get; private set; }
         public Transform RightHandTarget { get; private set; }
         public Transform LeftHandHint { get; private set; }
         public Transform RightHandHint { get; private set; }
+        public Transform LeftFootTarget { get; private set; }
+        public Transform RightFootTarget { get; private set; }
 
-        /// <summary> How much influence the IK will have over the respective bones </summary>
+        /// <summary> How much influence the IK will have over the animation </summary>
         public float LookIKWeight { get; set; }
         public float LeftArmIKWeight { get; set; }
         public float RightArmIKWeight { get; set; }
         public float LeftLegIKWeight { get; set; }
         public float RightLegIKWeight { get; set; }
 
-        // Values used for animating the transition between base animation & custom IK
+        // Values used for animating the transition between animation & IK
         private float _currentLeftArmIKWeight = 0, _currentRightArmIKWeight = 0;
         private float _currentLeftLegIKWeight = 0, _currentRightLegIKWeight = 0;
 
         /// <summary> How much the chest IK will influence the animation at its maximum </summary>
         public float ChestMaxLookWeight { get; set; } = 0.5f;
 
-        /// <summary> Smooths the transition between IK and base animation to avoid snapping </summary>
+        /// <summary> Smooths the transition between IK an animation to avoid snapping </summary>
         public bool SmoothIKTransitions { get; set; } = true;
         public float IKTransitionsSpeed { get; set; } = 10;
 
         void Awake() {
             _animator = GetComponent<Animator>();
 
-            // Setup a clean runtime anchor parent for generated transforms
-            _targetsParent = new GameObject("IK Runtime Targets Container").transform;
+            _targetsParent = new GameObject("IK Targets").transform;
             _targetsParent.parent = transform.parent;
 
-            // Generate Hand Targets
             LeftHandTarget = new GameObject("LeftHandTarget").transform;
             RightHandTarget = new GameObject("RightHandTarget").transform;
             LeftHandTarget.parent = _targetsParent;
@@ -71,25 +66,11 @@ namespace ActiveRagdoll {
             LeftHandHint.parent = _targetsParent;
             RightHandHint.parent = _targetsParent;
 
-            // FALLBACK AUTOGENERATION: If not assigned via Inspector, generate them here to prevent NullReferenceExceptions!
-            if (LeftFootTarget == null) {
-                LeftFootTarget = new GameObject("Generated_LeftFootTarget").transform;
-                LeftFootTarget.parent = _targetsParent;
-            }
-            if (RightFootTarget == null) {
-                RightFootTarget = new GameObject("Generated_RightFootTarget").transform;
-                RightFootTarget.parent = _targetsParent;
-            }
-            if (LeftKneeHint == null) {
-                LeftKneeHint = new GameObject("Generated_LeftKneeHint").transform;
-                LeftKneeHint.parent = _targetsParent;
-            }
-            if (RightKneeHint == null) {
-                RightKneeHint = new GameObject("Generated_RightKneeHint").transform;
-                RightKneeHint.parent = _targetsParent;
-            }
+            LeftFootTarget = new GameObject("LeftFootTarget").transform;
+            RightFootTarget = new GameObject("RightFootTarget").transform;
+            LeftFootTarget.parent = _targetsParent;
+            RightFootTarget.parent = _targetsParent;
         }
-
         private void Update() {
             UpdateIKTransitions();
         }
@@ -109,54 +90,46 @@ namespace ActiveRagdoll {
         }
 
         private void OnAnimatorIK(int layerIndex) {
-            if (_animator == null) return;
-
-            // 1. Look
+            // Look
             _animator.SetLookAtWeight(LookIKWeight, ((LeftArmIKWeight + RightArmIKWeight) / 2) * ChestMaxLookWeight, 1, 1, 0);
+
             Vector3 lookPos = Vector3.zero;
-            if (CurrentLookMode == LookMode.TARGET && LookTarget != null) lookPos = LookTarget.position;
+            if (CurrentLookMode == LookMode.TARGET) lookPos = LookTarget.position;
             if (CurrentLookMode == LookMode.POINT) lookPos = LookPoint;
+
             _animator.SetLookAtPosition(lookPos);
 
-            // 2. Left arm
+            // Left arm
             _animator.SetIKPositionWeight(AvatarIKGoal.LeftHand, _currentLeftArmIKWeight);
             _animator.SetIKRotationWeight(AvatarIKGoal.LeftHand, _currentLeftArmIKWeight);
             _animator.SetIKHintPositionWeight(AvatarIKHint.LeftElbow, LeftArmIKWeight);
+
             _animator.SetIKPosition(AvatarIKGoal.LeftHand, LeftHandTarget.position);
             _animator.SetIKRotation(AvatarIKGoal.LeftHand, LeftHandTarget.rotation);
             _animator.SetIKHintPosition(AvatarIKHint.LeftElbow, LeftHandHint.position);
 
-            // 3. Right arm
+            // Right arm
             _animator.SetIKPositionWeight(AvatarIKGoal.RightHand, _currentRightArmIKWeight);
             _animator.SetIKRotationWeight(AvatarIKGoal.RightHand, _currentRightArmIKWeight);
             _animator.SetIKHintPositionWeight(AvatarIKHint.RightElbow, RightArmIKWeight);
+
             _animator.SetIKPosition(AvatarIKGoal.RightHand, RightHandTarget.position);
             _animator.SetIKRotation(AvatarIKGoal.RightHand, RightHandTarget.rotation);
             _animator.SetIKHintPosition(AvatarIKHint.RightElbow, RightHandHint.position);
             
-            // 4. Left leg
-            if (LeftFootTarget != null) {
-                _animator.SetIKPositionWeight(AvatarIKGoal.LeftFoot, _currentLeftLegIKWeight);
-                _animator.SetIKRotationWeight(AvatarIKGoal.LeftFoot, _currentLeftLegIKWeight);
-                _animator.SetIKPosition(AvatarIKGoal.LeftFoot, LeftFootTarget.position);
-                _animator.SetIKRotation(AvatarIKGoal.LeftFoot, LeftFootTarget.rotation);
-            }
-            if (LeftKneeHint != null) {
-                _animator.SetIKHintPositionWeight(AvatarIKHint.LeftKnee, _currentLeftLegIKWeight);
-                _animator.SetIKHintPosition(AvatarIKHint.LeftKnee, LeftKneeHint.position);
-            }
+            // Left leg
+            _animator.SetIKPositionWeight(AvatarIKGoal.LeftFoot, _currentLeftLegIKWeight);
+            _animator.SetIKRotationWeight(AvatarIKGoal.LeftFoot, _currentLeftLegIKWeight);
 
-            // 5. Right leg
-            if (RightFootTarget != null) {
-                _animator.SetIKPositionWeight(AvatarIKGoal.RightFoot, _currentRightLegIKWeight);
-                _animator.SetIKRotationWeight(AvatarIKGoal.RightFoot, _currentRightLegIKWeight);
-                _animator.SetIKPosition(AvatarIKGoal.RightFoot, RightFootTarget.position);
-                _animator.SetIKRotation(AvatarIKGoal.RightFoot, RightFootTarget.rotation);
-            }
-            if (RightKneeHint != null) {
-                _animator.SetIKHintPositionWeight(AvatarIKHint.RightKnee, _currentRightLegIKWeight);
-                _animator.SetIKHintPosition(AvatarIKHint.RightKnee, RightKneeHint.position);
-            }
+            _animator.SetIKPosition(AvatarIKGoal.LeftFoot, LeftFootTarget.position);
+            _animator.SetIKRotation(AvatarIKGoal.LeftFoot, LeftFootTarget.rotation);
+
+            // Right leg
+            _animator.SetIKPositionWeight(AvatarIKGoal.RightFoot, _currentRightLegIKWeight);
+            _animator.SetIKRotationWeight(AvatarIKGoal.RightFoot, _currentRightLegIKWeight);
+
+            _animator.SetIKPosition(AvatarIKGoal.RightFoot, RightFootTarget.position);
+            _animator.SetIKRotation(AvatarIKGoal.RightFoot, RightFootTarget.rotation);
         }
 
         public void LookAtTarget(Transform target) {
@@ -169,4 +142,4 @@ namespace ActiveRagdoll {
             CurrentLookMode = LookMode.POINT;
         }
     }
-}
+} // namespace ActiveRagdoll*/
