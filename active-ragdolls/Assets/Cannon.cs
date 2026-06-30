@@ -28,7 +28,7 @@ public class Cannon : MonoBehaviour
         if (timer < _timeInterval) timer += Time.deltaTime;
         else {
             var cannonBall = SpawnCannonBall();
-            cannonBall.velocity = cannonBall.angularVelocity = Vector3.zero;
+            cannonBall.linearVelocity = cannonBall.angularVelocity = Vector3.zero;
             cannonBall.MovePosition(_spawnPoint.position);
             cannonBall.MoveRotation(_spawnPoint.rotation);
             cannonBall.AddForce(_spawnPoint.forward * _launchForce, ForceMode.Impulse);
