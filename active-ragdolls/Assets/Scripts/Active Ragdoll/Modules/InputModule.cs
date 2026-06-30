@@ -3,43 +3,47 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 namespace ActiveRagdoll {
-    // Author: Sergio Abreu García | https://sergioabreu.me
+    // Isolated data packets that can easily be serialized across a network later
+    [System.Serializable]
+    public struct Player1Data {
+        public Vector2 lookDelta;
+    }
 
-    /// <summary> Tells the ActiveRagdoll what it should do. Input can be external (like the
-    /// one from the player or from another script) and internal (kind of like sensors, such as
-    /// detecting if it's on floor). </summary>
+    [System.Serializable]
+    public struct Player2Data {
+        public float torsoLean;       // Backwards / Forwards [-1, 1]
+        public bool liftLeftLeg;
+        public bool extendLeftLeg;    // True = Forward, False = Backward
+        public bool liftRightLeg;
+        public bool extendRightLeg;   // True = Forward, False = Backward
+    }
+
     public class InputModule : Module {
-        // ---------- EXTERNAL INPUT ----------
+        [Header("--- CO-OP NETWORK STATES ---")]
+        public Player1Data Player1Input;
+        public Player2Data Player2Input;
 
+        // --- BACKWARD COMPATIBILITY DELEGATES (Fixes compilation errors) ---
         public delegate void onMoveDelegate(Vector2 movement);
         public onMoveDelegate OnMoveDelegates { get; set; }
-        public void OnMove(InputValue value) {
-            OnMoveDelegates?.Invoke(value.Get<Vector2>());
-        }
 
         public delegate void onLeftArmDelegate(float armWeight);
         public onLeftArmDelegate OnLeftArmDelegates { get; set; }
-        public void OnLeftArm(InputValue value) {
-            OnLeftArmDelegates?.Invoke(value.Get<float>());
-        }
 
         public delegate void onRightArmDelegate(float armWeight);
         public onRightArmDelegate OnRightArmDelegates { get; set; }
-        public void OnRightArm(InputValue value) {
-            OnRightArmDelegates?.Invoke(value.Get<float>());
-        }
 
-        // ---------- INTERNAL INPUT ----------
+        public delegate void onFloorChangedDelegate(bool onFloor);
+        public onFloorChangedDelegate OnFloorChangedDelegates { get; set; }
 
-        [Header("--- FLOOR ---")]
+        [Header("--- FLOOR DETECTION ---")]
         public float floorDetectionDistance = 0.3f;
         public float maxFloorSlope = 60;
 
         private bool _isOnFloor = true;
         public bool IsOnFloor { get { return _isOnFloor; } }
 
-        Rigidbody _rightFoot, _leftFoot;
-
+        private Rigidbody _rightFoot, _leftFoot;
 
         void Start() {
             _rightFoot = _activeRagdoll.GetPhysicalBone(HumanBodyBones.RightFoot).GetComponent<Rigidbody>();
@@ -48,38 +52,64 @@ namespace ActiveRagdoll {
 
         void Update() {
             UpdateOnFloor();
+            ReadLocalInputs(); // Temporarily polling locally for single player
         }
 
-        public delegate void onFloorChangedDelegate(bool onFloor);
-        public onFloorChangedDelegate OnFloorChangedDelegates { get; set; }
-        private void UpdateOnFloor() {
-            bool lastIsOnFloor = _isOnFloor;
+        // --- INPUT SYSTEM BROADCAST HANDLERS ---
+        // These keep the original input callbacks functional
+        public void OnMove(InputValue value) {
+            Vector2 move = value.Get<Vector2>();
+            OnMoveDelegates?.Invoke(move);
+        }
 
-            _isOnFloor = CheckRigidbodyOnFloor(_rightFoot, out Vector3 foo)
-                         || CheckRigidbodyOnFloor(_leftFoot, out foo);
+        public void OnLeftArm(InputValue value) {
+            float weight = value.Get<float>();
+            OnLeftArmDelegates?.Invoke(weight);
+        }
 
-            if (_isOnFloor != lastIsOnFloor)
-                OnFloorChangedDelegates(_isOnFloor);
+        public void OnRightArm(InputValue value) {
+            float weight = value.Get<float>();
+            OnRightArmDelegates?.Invoke(weight);
         }
 
         /// <summary>
-        /// Checks whether the given rigidbody is on floor
+        /// Reads local hardware keys for Player 2. In multiplayer, this block will 
+        /// only execute on Client 2 and then sync over the network.
         /// </summary>
-        /// <param name="bodyPart">Part of the body to check</param
-        /// <returns> True if the Rigidbody is on floor </returns>
+        private void ReadLocalInputs() {
+            // Torso Lean (W = Lean Forward, S = Lean Backward)
+            if (Keyboard.current.wKey.isPressed) Player2Input.torsoLean = 1f;
+            else if (Keyboard.current.sKey.isPressed) Player2Input.torsoLean = -1f;
+            else Player2Input.torsoLean = 0f;
+
+            // Left Leg (Q = Lift Up, A = Reach Forward)
+            Player2Input.liftLeftLeg = Keyboard.current.qKey.isPressed;
+            Player2Input.extendLeftLeg = Keyboard.current.aKey.isPressed;
+
+            // Right Leg (E = Lift Up, D = Reach Forward)
+            Player2Input.liftRightLeg = Keyboard.current.eKey.isPressed;
+            Player2Input.extendRightLeg = Keyboard.current.dKey.isPressed;
+        }
+
+        // ---------- INTERNAL FLOOR SENSORS ----------
+        private void UpdateOnFloor() {
+            bool lastIsOnFloor = _isOnFloor;
+            _isOnFloor = CheckRigidbodyOnFloor(_rightFoot, out Vector3 foo) || CheckRigidbodyOnFloor(_leftFoot, out foo);
+
+            if (_isOnFloor != lastIsOnFloor)
+                OnFloorChangedDelegates?.Invoke(_isOnFloor);
+        }
+
         public bool CheckRigidbodyOnFloor(Rigidbody bodyPart, out Vector3 normal) {
-            // Raycast
             Ray ray = new Ray(bodyPart.position, Vector3.down);
             bool onFloor = Physics.Raycast(ray, out RaycastHit info, floorDetectionDistance, ~(1 << bodyPart.gameObject.layer));
-
-            // Additional checks
             onFloor = onFloor && Vector3.Angle(info.normal, Vector3.up) <= maxFloorSlope;
 
             if (onFloor && info.collider.gameObject.TryGetComponent<Floor>(out Floor floor))
-                    onFloor = floor.isFloor;
+                onFloor = floor.isFloor;
 
             normal = info.normal;
             return onFloor;
         }
     }
-} // namespace ActiveRagdoll
+}
